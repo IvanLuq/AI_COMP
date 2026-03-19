@@ -71,6 +71,74 @@ Where `n_c` is the number of samples in class `c` and `N` is the total samples.
 
 The baseline (random stratified sampling) achieves ~4% weighted F1.
 
+## Our CNN Solution
+
+The current training pipeline is implemented in `train_cnn.py` and uses only the original 15 input channels.
+
+### 1) Split strategy for rare classes
+
+- We use an 85/15 train/validation split with `StratifiedShuffleSplit` for classes that have at least 2 samples.
+- Classes with fewer than 2 samples are forced into the training set so validation stays stable.
+
+### 2) Preprocessing and normalization
+
+- Input shape is `(15, 35, 35)`.
+- Per-channel mean and std are computed from training samples only to avoid leakage.
+- Saved normalization files:
+	- `weights/channel_mean.npy`
+	- `weights/channel_std.npy`
+
+### 3) Data augmentation
+
+Applied only on training batches:
+
+- Random horizontal flip
+- Random vertical flip
+- Random 90 degree rotation (`k in {0,1,2,3}`)
+
+### 4) CNN architecture
+
+`HabitatCNN` is a compact residual CNN:
+
+- Stem: 2 x Conv-BN-SiLU blocks (15 -> 32)
+- Down block 1: strided conv (32 -> 64) + residual block
+- Down block 2: strided conv (64 -> 128) + 2 residual blocks
+- Head: global average pooling + MLP (128 -> 128 -> 71)
+
+### 5) Imbalance handling
+
+To handle long-tail class imbalance, we combine three techniques:
+
+- `WeightedRandomSampler` with inverse-frequency sample weights
+- Class-weighted cross-entropy loss
+- Logit adjustment with class priors (`tau = 0.5`)
+
+### 6) Optimization
+
+- Optimizer: `AdamW` (`lr=3e-4`, `weight_decay=1e-3`)
+- Scheduler: cosine annealing (`eta_min=1e-6`)
+- Epochs: 30
+- Batch size: 64 (train), 256 (validation)
+
+### 7) Model selection and artifacts
+
+- Validation metric: weighted F1
+- Best checkpoint is saved as `weights/habitat_cnn.pt`
+- Normalization stats are saved with the checkpoint for inference consistency
+
+### 8) Reproduce training and evaluation
+
+```bash
+# Train CNN and save best model + normalization stats
+python train_cnn.py
+
+# Evaluate saved model on the validation split
+python eval_saved.py
+
+# Quick sanity check on random training patches
+python quick_test.py
+```
+
 ## Evaluation
 
 During the competition, you can validate against the validation set multiple times. **You can only submit to the test set once!**
@@ -96,11 +164,21 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Develop Your Model
+### 2. Train the CNN Model
 
-Use the training data to build and train your model. Update `model.py` with your prediction logic.
+Run the training script to produce the CNN weights and channel normalization files:
 
-### 3. Test Locally
+```bash
+python train_cnn.py
+```
+
+### 3. Evaluate the Saved CNN
+
+```bash
+python eval_saved.py
+```
+
+### 4. Test Locally
 
 Start your API locally to test:
 
@@ -110,7 +188,7 @@ python api.py
 
 Navigate to http://localhost:4321 to verify it's running.
 
-### 4. Submit
+### 5. Submit
 
 When ready to submit:
 
